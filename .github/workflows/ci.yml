@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "The following files need gofmt:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Check go.mod and go.sum
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Run tests
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Build TUI
+        run: go build -trimpath -o dist/rekja ./cmd/rekja
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rekja-linux-amd64
+          path: dist/rekja
+          if-no-files-found: error

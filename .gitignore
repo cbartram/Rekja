@@ -8,6 +8,12 @@
 *.so
 *.dylib
 
+
+.idea
+.env
+.DS_STORE
+*.iml
+
 # Test binary, built with `go test -c`
 *.test
 
