@@ -1,0 +1,95 @@
+{
+  "plugins_dir": "/config/valheimplus/plugins",
+  "thunderstore_base_url": "https://valheim.thunderstore.io",
+  "preserve_config_files": true,
+  "restart_after_sync": false,
+  "require_restart_prompt": true,
+  "kubernetes": {
+    "namespace": "valheim",
+    "pod_name": "",
+    "label_selector": "app.kubernetes.io/instance=valheim",
+    "container_name": "valheim",
+    "kubeconfig_path": "",
+    "restart_command": [
+      "supervisorctl",
+      "restart",
+      "valheim-server"
+    ]
+  },
+  "tracked": [
+    {
+      "namespace": "Advize",
+      "name": "PlantEverything",
+      "full_name": "Advize-PlantEverything",
+      "desired_version": "latest",
+      "source": "thunderstore",
+      "dependency_mode": "auto-approved"
+    },
+    {
+      "namespace": "ishid4",
+      "name": "BetterArchery",
+      "full_name": "ishid4-BetterArchery",
+      "desired_version": "latest",
+      "source": "thunderstore",
+      "dependency_mode": "auto-approved"
+    },
+    {
+      "namespace": "RandyKnapp",
+      "name": "EquipmentAndQuickSlots",
+      "full_name": "RandyKnapp-EquipmentAndQuickSlots",
+      "desired_version": "latest",
+      "source": "thunderstore",
+      "dependency_mode": "auto-approved"
+    },
+    {
+      "namespace": "JereKuusela",
+      "name": "Server_devcommands",
+      "full_name": "JereKuusela-Server_devcommands",
+      "desired_version": "latest",
+      "source": "thunderstore",
+      "dependency_mode": "auto-approved"
+    }
+  ],
+  "template_notes": {
+    "fill_before_use": [
+      "kubernetes.namespace",
+      "either kubernetes.pod_name or kubernetes.label_selector"
+    ],
+    "installed_files_seen": [
+      "Advize_PlantEverything.dll",
+      "BetterArchery.dll",
+      "BetterArcheryRecipes.json",
+      "EquipmentAndQuickSlots.dll",
+      "SFX/",
+      "ServerDevcommands.dll",
+      "Valheim.DisplayBepInExInfo.dll",
+      "ValheimPlus.dll"
+    ],
+    "not_tracked_by_rekja": [
+      {
+        "path": "ValheimPlus.dll",
+        "reason": "Owned by VALHEIM_PLUS=true and the server image update cycle."
+      },
+      {
+        "path": "BetterArcheryRecipes.json",
+        "reason": "Likely config or asset file associated with BetterArchery; Rekja should preserve config files rather than track it as a separate Thunderstore package."
+      },
+      {
+        "path": "SFX/",
+        "reason": "Likely asset directory from an installed package; Rekja will classify it during inventory scanning but it is not a separate tracked package."
+      },
+      {
+        "path": "Valheim.DisplayBepInExInfo.dll",
+        "reason": "Thunderstore package identity was not confidently resolved. Add it to tracked only after confirming its Namespace-Name package."
+      }
+    ],
+    "optional_placeholder_for_display_bepinex_info": {
+      "namespace": "valheim",
+      "name": "TODO_PACKAGE_NAME",
+      "full_name": "valheim-TODO_PACKAGE_NAME",
+      "desired_version": "latest",
+      "source": "thunderstore",
+      "dependency_mode": "auto-approved"
+    }
+  }
+}

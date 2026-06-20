@@ -24,6 +24,7 @@ func main() {
 	flag.StringVar(&configPath, "config", "", "Path to a Rekja config file")
 	flag.Parse()
 
+	fmt.Fprintf(os.Stdout, "Loading config from: %s", configPath)
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)

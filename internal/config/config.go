@@ -13,7 +13,7 @@ import (
 const (
 	defaultPluginsDir          = "/config/valheimplus/plugins"
 	defaultThunderstoreBaseURL = "https://valheim.thunderstore.io"
-	defaultContainerName       = "valheim-server"
+	defaultContainerName       = "valheim"
 )
 
 // Config is the runtime configuration for a single Rekja TUI session.
