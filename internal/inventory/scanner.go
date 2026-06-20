@@ -11,7 +11,7 @@ import (
 	"github.com/cbartram/rekja/internal/manifest"
 )
 
-// Scanner enumerates plugin files and reconciles them with the Rekja manifest.
+// Scanner lists plugin files and reconciles them with the Rekja manifest.
 type Scanner struct {
 	pluginsDir string
 	store      *Store

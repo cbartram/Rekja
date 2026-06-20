@@ -24,15 +24,13 @@ func main() {
 	flag.StringVar(&configPath, "config", "", "Path to a Rekja config file")
 	flag.Parse()
 
-	fmt.Fprintf(os.Stdout, "Loading config from: %s", configPath)
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
-	httpClient := &http.Client{Timeout: 90 * time.Second}
-	thunderstoreClient := thunderstore.NewClient(cfg.ThunderstoreBaseURL, httpClient)
+	thunderstoreClient := thunderstore.NewClient(cfg.ThunderstoreBaseURL, &http.Client{Timeout: 90 * time.Second})
 	store := inventory.NewStore(cfg.ManifestPath())
 	scanner := inventory.NewScanner(cfg.PluginsDir, store)
 	syncEngine := sync.NewEngine(cfg.PluginsDir, cfg.WorkDir(), thunderstoreClient, store)

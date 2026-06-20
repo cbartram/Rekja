@@ -20,7 +20,7 @@
 
 # Getting Started
 
-Rekja is a Bubble Tea terminal application for managing additional Thunderstore/BepInEx-style plugins on a Kubernetes-hosted dedicated Valheim server.
+Rekja is a terminal UI (TUI) application for managing additional Thunderstore (BepInEx) style plugins on a Kubernetes hosted dedicated Valheim server.
 
 It is designed for the `ghcr.io/community-valheim-tools/valheim-server` container with `VALHEIM_PLUS=true`. ValheimPlus itself, including its bundled BepInEx runtime and image-managed update behavior, remains owned by the server image. Rekja manages only extra plugins layered under:
 
@@ -28,7 +28,7 @@ It is designed for the `ghcr.io/community-valheim-tools/valheim-server` containe
 /config/valheimplus/plugins/
 ```
 
-Use at your own risk. Mod updates can change server behavior, break world compatibility, or require matching client-side plugin changes.
+> :warning: Use at your own risk. Mod updates can change server behavior, break world compatibility, or require matching client-side plugin changes.
 
 ## Quick Start
 

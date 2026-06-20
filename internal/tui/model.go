@@ -5,10 +5,15 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/cbartram/rekja/internal/manifest"
 
 	"github.com/cbartram/rekja/internal/app"
 	"github.com/cbartram/rekja/internal/resolve"
@@ -26,11 +31,108 @@ const (
 	viewConfig
 )
 
+// --- Theme -----------------------------------------------------------------
+
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	mutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	colorAccent = lipgloss.Color("39")  // cyan/blue
+	colorGood   = lipgloss.Color("42")  // green
+	colorWarn   = lipgloss.Color("214") // amber
+	colorBad    = lipgloss.Color("203") // red
+	colorMuted  = lipgloss.Color("244") // grey
+	colorFaint  = lipgloss.Color("237") // border grey
+	colorText   = lipgloss.Color("252")
+
+	appStyle = lipgloss.NewStyle().Padding(1, 2)
+
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("0")).
+			Background(colorAccent).
+			Padding(0, 1)
+
+	subtitleStyle = mutedStyle
+
+	tabActiveStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("0")).
+			Background(colorAccent).
+			Padding(0, 1)
+
+	tabInactiveStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Padding(0, 1)
+
+	panelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorFaint).
+			Padding(1, 2)
+
+	errorStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorBad).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBad).
+			Padding(0, 1)
+
+	mutedStyle    = lipgloss.NewStyle().Foreground(colorMuted)
+	goodStyle     = lipgloss.NewStyle().Foreground(colorGood)
+	warnStyle     = lipgloss.NewStyle().Foreground(colorWarn)
+	badStyle      = lipgloss.NewStyle().Foreground(colorBad)
+	headingStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorText).MarginBottom(1)
+	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 )
+
+// --- Keymap (for help bubble) -----------------------------------------------
+
+type keyMap struct {
+	Tab1, Tab2, Tab3, Tab4, Tab5, Tab6 key.Binding
+	Up, Down                           key.Binding
+	Refresh, Plan, Sync, Logs, Restart key.Binding
+	Add, Untrack                       key.Binding
+	Quit                               key.Binding
+}
+
+func defaultKeyMap() keyMap {
+	return keyMap{
+		Tab1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1", "installed")),
+		Tab2:    key.NewBinding(key.WithKeys("2"), key.WithHelp("2", "updates")),
+		Tab3:    key.NewBinding(key.WithKeys("3"), key.WithHelp("3", "dependencies")),
+		Tab4:    key.NewBinding(key.WithKeys("4"), key.WithHelp("4", "sync")),
+		Tab5:    key.NewBinding(key.WithKeys("5"), key.WithHelp("5", "logs")),
+		Tab6:    key.NewBinding(key.WithKeys("6"), key.WithHelp("6", "config")),
+		Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+		Plan:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "plan")),
+		Sync:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync")),
+		Logs:    key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "logs")),
+		Restart: key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "restart")),
+		Add:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
+		Untrack: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "untrack")),
+		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	}
+}
+
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Tab1, k.Tab2, k.Tab3, k.Tab4, k.Tab5, k.Tab6, k.Add, k.Untrack, k.Quit}
+}
+
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Tab1, k.Tab2, k.Tab3, k.Tab4, k.Tab5, k.Tab6},
+		{k.Up, k.Down, k.Add, k.Untrack},
+		{k.Refresh, k.Plan, k.Sync, k.Logs, k.Restart, k.Quit},
+	}
+}
+
+// modItem adapts a tracked mod into a list.Item for bubbles/list.
+type modItem struct {
+	title, desc string
+}
+
+func (i modItem) Title() string       { return i.title }
+func (i modItem) Description() string { return i.desc }
+func (i modItem) FilterValue() string { return i.title }
 
 // Model is the BubbleTea root model.
 type Model struct {
@@ -41,9 +143,14 @@ type Model struct {
 	loading    bool
 	state      app.State
 	plan       resolve.Plan
-	selected   int
+	list       list.Model
 	adding     bool
 	addInput   textinput.Model
+	logView    viewport.Model
+	help       help.Model
+	keys       keyMap
+	width      int
+	height     int
 	syncEvents <-chan syncengine.Event
 	syncLog    []string
 	serverLog  string
@@ -80,10 +187,27 @@ type trackChangedMsg struct {
 func NewModel(ctx context.Context, service *app.Service) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
+
 	input := textinput.New()
 	input.Placeholder = "Namespace-Name[@version]"
 	input.CharLimit = 160
 	input.SetWidth(48)
+	input.Prompt = "› "
+
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(colorAccent).BorderLeftForeground(colorAccent)
+	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.Foreground(colorAccent).BorderLeftForeground(colorAccent)
+	l := list.New(nil, delegate, 0, 0)
+	l.Title = "Installed Mods"
+	l.Styles.Title = titleStyle
+	l.SetShowHelp(false)
+	l.SetShowStatusBar(false)
+
+	vp := viewport.New()
+
+	h := help.New()
+
 	return Model{
 		ctx:      ctx,
 		service:  service,
@@ -91,6 +215,12 @@ func NewModel(ctx context.Context, service *app.Service) Model {
 		view:     viewInstalled,
 		loading:  true,
 		addInput: input,
+		list:     l,
+		logView:  vp,
+		help:     h,
+		keys:     defaultKeyMap(),
+		width:    100,
+		height:   30,
 	}
 }
 
@@ -102,6 +232,10 @@ func (m Model) Init() tea.Cmd {
 // Update handles user input and async workflow messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		m.applySizes()
+		return m, nil
 	case tea.KeyPressMsg:
 		if m.adding {
 			return m.updateAddInput(msg)
@@ -151,10 +285,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.view == viewConfig || m.view == viewInstalled {
 				return m, m.untrackSelected()
 			}
-		case "up", "k":
-			m.moveSelection(-1)
-		case "down", "j":
-			m.moveSelection(1)
+		case "up", "k", "down", "j":
+			if m.view == viewInstalled {
+				var cmd tea.Cmd
+				m.list, cmd = m.list.Update(msg)
+				return m, cmd
+			}
+		}
+		if m.view == viewLogs {
+			var cmd tea.Cmd
+			m.logView, cmd = m.logView.Update(msg)
+			return m, cmd
 		}
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -165,9 +306,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		if msg.err == nil {
 			m.state = msg.state
-			if m.selected >= len(m.state.Inventory.Manifest.Tracked) {
-				m.selected = 0
-			}
+			m.list.SetItems(trackedToItems(m.state.Inventory.Manifest.Tracked))
 		}
 	case planBuiltMsg:
 		m.err = msg.err
@@ -193,10 +332,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logsLoadedMsg:
 		m.err = msg.err
 		m.serverLog = msg.logs
+		m.logView.SetContent(msg.logs)
+		m.logView.GotoBottom()
 	case restartMsg:
 		m.err = msg.err
 		if msg.output != "" {
 			m.serverLog = msg.output
+			m.logView.SetContent(msg.output)
+			m.logView.GotoBottom()
 		}
 	case trackChangedMsg:
 		m.err = msg.err
@@ -207,6 +350,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// applySizes recalculates inner component dimensions from the terminal size.
+func (m *Model) applySizes() {
+	innerW := m.width - 6 // account for appStyle/panelStyle padding+border
+	if innerW < 20 {
+		innerW = 20
+	}
+	innerH := m.height - 12
+	if innerH < 5 {
+		innerH = 5
+	}
+	m.list.SetSize(innerW, innerH)
+	m.logView.SetWidth(innerW)
+	m.logView.SetHeight(innerH)
+}
+
+func trackedToItems(tracked []manifest.TrackedMod) []list.Item {
+	items := make([]list.Item, len(tracked))
+	for i, mod := range tracked {
+		status := goodStyle.Render("✓ up to date")
+		if mod.DesiredVersion != "" && mod.DesiredVersion != mod.InstalledVersion {
+			status = warnStyle.Render(fmt.Sprintf("→ %s", mod.DesiredVersion))
+		}
+		items[i] = modItem{
+			title: mod.Key(),
+			desc:  fmt.Sprintf("installed %s  %s", mod.InstalledVersion, status),
+		}
+	}
+	return items
+}
+
 // View renders the active screen.
 func (m Model) View() tea.View {
 	view := tea.NewView(m.render())
@@ -214,38 +387,60 @@ func (m Model) View() tea.View {
 	return view
 }
 
+var rekjaBanner = []string{
+	`▛▀▖▞▀▖▌  ▐▌▝▀▖`,
+	`▙▄▘▛▀ ▙▄▌▐▌▞▀▌`,
+	`▌▝▖▙▄▖▌ ▌▐▌▝▄▌`,
+}
+
 func (m Model) render() string {
-	var builder strings.Builder
-	builder.WriteString(titleStyle.Render("Rekja"))
-	if m.loading {
-		builder.WriteString(" ")
-		builder.WriteString(m.spinner.View())
+	var b strings.Builder
+
+	bannerStyle := lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	for _, line := range rekjaBanner {
+		b.WriteString(bannerStyle.Render(line))
+		b.WriteString("\n")
 	}
-	builder.WriteString("\n")
-	builder.WriteString(m.nav())
-	builder.WriteString("\n\n")
+	subtitle := subtitleStyle.Render("Valheim mod manager")
+	if m.loading {
+		subtitle += "  " + m.spinner.View()
+	}
+	b.WriteString(subtitle)
+	b.WriteString("\n\n")
+	ruleWidth := m.width - 4
+	if ruleWidth < 1 {
+		ruleWidth = 1
+	}
+	b.WriteString(lipgloss.NewStyle().Foreground(colorFaint).Render(strings.Repeat("─", ruleWidth)))
+	b.WriteString("\n\n")
+	b.WriteString(m.nav())
+	b.WriteString("\n\n")
+
 	if m.err != nil {
-		builder.WriteString(errorStyle.Render(m.err.Error()))
-		builder.WriteString("\n\n")
+		b.WriteString(errorStyle.Render("✕ " + m.err.Error()))
+		b.WriteString("\n\n")
 	}
 
+	var body string
 	switch m.view {
 	case viewInstalled:
-		builder.WriteString(m.installedView())
+		body = m.installedView()
 	case viewUpdates:
-		builder.WriteString(m.updatesView())
+		body = m.updatesView()
 	case viewDependencies:
-		builder.WriteString(m.dependenciesView())
+		body = m.dependenciesView()
 	case viewSync:
-		builder.WriteString(m.syncView())
+		body = m.syncView()
 	case viewLogs:
-		builder.WriteString(m.logsView())
+		body = m.logsView()
 	case viewConfig:
-		builder.WriteString(m.configView())
+		body = m.configView()
 	}
-	builder.WriteString("\n\n")
-	builder.WriteString(mutedStyle.Render("1 installed  2 updates  3 dependencies  4 sync  5 logs  6 config  a add  d untrack  r refresh  p plan  s sync  l logs  R restart  q quit"))
-	return builder.String()
+	b.WriteString(panelStyle.Width(m.width - 4).Render(body))
+	b.WriteString("\n\n")
+	b.WriteString(m.help.View(m.keys))
+
+	return appStyle.Render(b.String())
 }
 
 func (m Model) nav() string {
@@ -253,122 +448,149 @@ func (m Model) nav() string {
 	parts := make([]string, len(labels))
 	for index, label := range labels {
 		if view(index) == m.view {
-			parts[index] = "[" + label + "]"
+			parts[index] = tabActiveStyle.Render(label)
 		} else {
-			parts[index] = label
+			parts[index] = tabInactiveStyle.Render(label)
 		}
 	}
-	return strings.Join(parts, "  ")
+	return strings.Join(parts, " ")
 }
 
 func (m Model) installedView() string {
-	var builder strings.Builder
+	var b strings.Builder
 	if len(m.state.Inventory.Manifest.Tracked) == 0 {
-		builder.WriteString("No tracked mods installed yet.\n")
+		b.WriteString(mutedStyle.Render("No tracked mods installed yet. Press a to add one."))
 	} else {
-		for index, mod := range m.state.Inventory.Manifest.Tracked {
-			marker := " "
-			if index == m.selected {
-				marker = ">"
-			}
-			builder.WriteString(fmt.Sprintf("%s %s %s\n", marker, mod.Key(), mod.InstalledVersion))
-		}
+		b.WriteString(m.list.View())
 	}
+
 	if len(m.state.Inventory.UntrackedFiles) > 0 {
-		builder.WriteString("\nUntracked files:\n")
+		b.WriteString("\n\n")
+		b.WriteString(headingStyle.Render("Untracked files"))
+		b.WriteString("\n")
 		for _, file := range m.state.Inventory.UntrackedFiles {
-			builder.WriteString(fmt.Sprintf("- %s %s\n", file.Path, file.Kind))
+			b.WriteString(mutedStyle.Render(fmt.Sprintf("  • %s (%s)\n", file.Path, file.Kind)))
 		}
 	}
 	if len(m.state.Inventory.TrackedDrift) > 0 {
-		builder.WriteString("\nDrift detected:\n")
+		b.WriteString("\n")
+		b.WriteString(warnStyle.Render("Drift detected"))
+		b.WriteString("\n")
 		for _, file := range m.state.Inventory.TrackedDrift {
-			builder.WriteString(fmt.Sprintf("- %s\n", file.Path))
+			b.WriteString(warnStyle.Render(fmt.Sprintf("  • %s\n", file.Path)))
 		}
 	}
-	return builder.String()
+	return b.String()
 }
 
 func (m Model) updatesView() string {
 	if len(m.state.Updates) == 0 {
-		return "No updates detected.\n"
+		return goodStyle.Render("✓ Everything is up to date.")
 	}
-	var builder strings.Builder
+	var b strings.Builder
+	b.WriteString(headingStyle.Render(fmt.Sprintf("%d update(s) available", len(m.state.Updates))))
+	b.WriteString("\n")
 	for _, update := range m.state.Updates {
-		builder.WriteString(fmt.Sprintf("%s %s -> %s\n", update.Package.Key(), update.InstalledVersion, update.LatestVersion))
+		b.WriteString(fmt.Sprintf("  %s  %s %s %s\n",
+			selectedStyle.Render(update.Package.Key()),
+			mutedStyle.Render(update.InstalledVersion),
+			mutedStyle.Render("→"),
+			warnStyle.Render(update.LatestVersion),
+		))
 	}
-	return builder.String()
+	return b.String()
 }
 
 func (m Model) dependenciesView() string {
-	var builder strings.Builder
+	var b strings.Builder
 	if len(m.plan.Roots) == 0 && len(m.plan.Dependencies) == 0 {
-		builder.WriteString("No sync plan loaded. Press p to resolve dependencies.\n")
-		return builder.String()
+		b.WriteString(mutedStyle.Render("No sync plan loaded. Press p to resolve dependencies."))
+		return b.String()
 	}
-	builder.WriteString("Roots:\n")
+	b.WriteString(headingStyle.Render("Roots"))
+	b.WriteString("\n")
 	for _, item := range m.plan.Roots {
-		builder.WriteString(fmt.Sprintf("- %s %s\n", item.Package.FullName, item.Version.VersionNumber))
+		b.WriteString(fmt.Sprintf("  %s %s\n", selectedStyle.Render(item.Package.FullName), mutedStyle.Render(item.Version.VersionNumber)))
 	}
-	builder.WriteString("\nDependencies:\n")
+	b.WriteString("\n")
+	b.WriteString(headingStyle.Render("Dependencies"))
+	b.WriteString("\n")
 	if len(m.plan.Dependencies) == 0 {
-		builder.WriteString("- none\n")
+		b.WriteString(mutedStyle.Render("  none\n"))
 	}
 	for _, item := range m.plan.Dependencies {
-		builder.WriteString(fmt.Sprintf("- %s %s required by %s\n", item.Package.FullName, item.Version.VersionNumber, item.DependencyOf))
+		b.WriteString(fmt.Sprintf("  %s %s %s\n",
+			item.Package.FullName,
+			mutedStyle.Render(item.Version.VersionNumber),
+			mutedStyle.Render("required by "+item.DependencyOf),
+		))
 	}
 	if len(m.plan.Warnings) > 0 {
-		builder.WriteString("\nWarnings:\n")
+		b.WriteString("\n")
+		b.WriteString(warnStyle.Render("Warnings"))
+		b.WriteString("\n")
 		for _, warning := range m.plan.Warnings {
-			builder.WriteString("- " + warning + "\n")
+			b.WriteString(warnStyle.Render("  • " + warning + "\n"))
 		}
 	}
-	return builder.String()
+	return b.String()
 }
 
 func (m Model) syncView() string {
 	if len(m.syncLog) == 0 {
-		return "No sync has run. Press s to apply the current plan.\n"
+		return mutedStyle.Render("No sync has run. Press s to apply the current plan.")
 	}
-	return strings.Join(m.syncLog, "\n") + "\n"
+	var b strings.Builder
+	for _, line := range m.syncLog {
+		b.WriteString("  " + line + "\n")
+	}
+	return b.String()
 }
 
 func (m Model) logsView() string {
 	if m.serverLog == "" {
-		return "No logs loaded. Press l for logs or R to restart the server.\n"
+		return mutedStyle.Render("No logs loaded. Press l for logs or R to restart the server.")
 	}
-	return m.serverLog
+	return m.logView.View()
 }
 
 func (m Model) configView() string {
 	cfg := m.service.Config()
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("Plugins: %s\nManifest: %s\nThunderstore: %s\nKubernetes: namespace=%s pod=%s selector=%s container=%s\n",
-		cfg.PluginsDir,
-		cfg.ManifestPath(),
-		cfg.ThunderstoreBaseURL,
-		cfg.Kubernetes.Namespace,
-		cfg.Kubernetes.PodName,
-		cfg.Kubernetes.LabelSelector,
-		cfg.Kubernetes.ContainerName,
-	))
-	builder.WriteString("\nTracked mods:\n")
+	var b strings.Builder
+	b.WriteString(headingStyle.Render("Configuration"))
+	b.WriteString("\n")
+	rows := [][2]string{
+		{"Plugins", cfg.PluginsDir},
+		{"Manifest", cfg.ManifestPath()},
+		{"Thunderstore", cfg.ThunderstoreBaseURL},
+		{"Namespace", cfg.Kubernetes.Namespace},
+		{"Pod", cfg.Kubernetes.PodName},
+		{"Selector", cfg.Kubernetes.LabelSelector},
+		{"Container", cfg.Kubernetes.ContainerName},
+	}
+	for _, row := range rows {
+		b.WriteString(fmt.Sprintf("  %s %s\n", mutedStyle.Width(14).Render(row[0]+":"), row[1]))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(headingStyle.Render("Tracked mods"))
+	b.WriteString("\n")
 	if len(m.state.Inventory.Manifest.Tracked) == 0 {
-		builder.WriteString("- none\n")
+		b.WriteString(mutedStyle.Render("  none\n"))
 	}
-	for index, tracked := range m.state.Inventory.Manifest.Tracked {
-		marker := " "
-		if index == m.selected {
-			marker = ">"
-		}
-		builder.WriteString(fmt.Sprintf("%s %s desired=%s installed=%s\n", marker, tracked.Key(), tracked.DesiredVersion, tracked.InstalledVersion))
+	for _, tracked := range m.state.Inventory.Manifest.Tracked {
+		b.WriteString(fmt.Sprintf("  %s desired=%s installed=%s\n",
+			tracked.Key(), mutedStyle.Render(tracked.DesiredVersion), mutedStyle.Render(tracked.InstalledVersion)))
 	}
+
 	if m.adding {
-		builder.WriteString("\nAdd tracked mod: ")
-		builder.WriteString(m.addInput.View())
-		builder.WriteString("\n")
+		b.WriteString("\n")
+		b.WriteString(headingStyle.Render("Add tracked mod"))
+		b.WriteString("\n  ")
+		b.WriteString(m.addInput.View())
+		b.WriteString("\n")
 	}
-	return builder.String()
+	return b.String()
 }
 
 func (m Model) loadState() tea.Cmd {
@@ -449,26 +671,16 @@ func (m Model) updateAddInput(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *Model) moveSelection(delta int) {
-	count := len(m.state.Inventory.Manifest.Tracked)
-	if count == 0 {
-		m.selected = 0
-		return
-	}
-	m.selected += delta
-	if m.selected < 0 {
-		m.selected = count - 1
-	}
-	if m.selected >= count {
-		m.selected = 0
-	}
-}
-
 func (m Model) untrackSelected() tea.Cmd {
-	if len(m.state.Inventory.Manifest.Tracked) == 0 || m.selected >= len(m.state.Inventory.Manifest.Tracked) {
+	tracked := m.state.Inventory.Manifest.Tracked
+	if len(tracked) == 0 {
 		return nil
 	}
-	fullName := m.state.Inventory.Manifest.Tracked[m.selected].Key()
+	index := m.list.Index()
+	if index < 0 || index >= len(tracked) {
+		return nil
+	}
+	fullName := tracked[index].Key()
 	return func() tea.Msg {
 		return trackChangedMsg{err: m.service.UntrackMod(fullName)}
 	}
