@@ -30,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	thunderstoreClient := thunderstore.NewClient(cfg.ThunderstoreBaseURL, &http.Client{Timeout: 90 * time.Second})
+	thunderstoreClient := thunderstore.NewClient(cfg.ThunderstoreBaseURL, &http.Client{Timeout: 20 * time.Second})
 	store := inventory.NewStore(cfg.ManifestPath())
 	scanner := inventory.NewScanner(cfg.PluginsDir, store)
 	syncEngine := sync.NewEngine(cfg.PluginsDir, cfg.WorkDir(), thunderstoreClient, store)

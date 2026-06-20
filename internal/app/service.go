@@ -189,6 +189,7 @@ func (s *Service) Config() config.Config {
 	return s.deps.Config
 }
 
+// parseTrackedSpec parses a mod spec in the format Namespace-Name or Namespace-Name@Version into a TrackedMod struct.
 func parseTrackedSpec(spec string) (manifest.TrackedMod, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
@@ -202,9 +203,9 @@ func parseTrackedSpec(spec string) (manifest.TrackedMod, error) {
 			return manifest.TrackedMod{}, fmt.Errorf("desired version cannot be empty")
 		}
 	}
-	namespace, name, ok := strings.Cut(spec, "-")
+	namespace, name, ok := strings.Cut(spec, "/")
 	if !ok || namespace == "" || name == "" {
-		return manifest.TrackedMod{}, fmt.Errorf("tracked mod must be Namespace-Name or Namespace-Name@Version")
+		return manifest.TrackedMod{}, fmt.Errorf("tracked mod must be Namespace/Name or Namespace/Name@Version")
 	}
 	return manifest.TrackedMod{
 		Namespace:      namespace,

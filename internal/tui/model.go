@@ -45,34 +45,34 @@ var (
 	appStyle = lipgloss.NewStyle().Padding(1, 2)
 
 	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("0")).
-			Background(colorAccent).
-			Padding(0, 1)
+		Bold(true).
+		Foreground(lipgloss.Color("0")).
+		Background(colorAccent).
+		Padding(0, 1)
 
 	subtitleStyle = mutedStyle
 
 	tabActiveStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("0")).
-			Background(colorAccent).
-			Padding(0, 1)
+		Bold(true).
+		Foreground(lipgloss.Color("0")).
+		Background(colorAccent).
+		Padding(0, 1)
 
 	tabInactiveStyle = lipgloss.NewStyle().
-				Foreground(colorMuted).
-				Padding(0, 1)
+		Foreground(colorMuted).
+		Padding(0, 1)
 
 	panelStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorFaint).
-			Padding(1, 2)
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorFaint).
+		Padding(1, 2)
 
 	errorStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorBad).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorBad).
-			Padding(0, 1)
+		Bold(true).
+		Foreground(colorBad).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBad).
+		Padding(0, 1)
 
 	mutedStyle    = lipgloss.NewStyle().Foreground(colorMuted)
 	goodStyle     = lipgloss.NewStyle().Foreground(colorGood)
@@ -190,7 +190,7 @@ func NewModel(ctx context.Context, service *app.Service) Model {
 	sp.Style = lipgloss.NewStyle().Foreground(colorAccent)
 
 	input := textinput.New()
-	input.Placeholder = "Namespace-Name[@version]"
+	input.Placeholder = "Namespace/Name[@version]"
 	input.CharLimit = 160
 	input.SetWidth(48)
 	input.Prompt = "› "
@@ -576,8 +576,9 @@ func (m Model) configView() string {
 	b.WriteString(headingStyle.Render("Tracked mods"))
 	b.WriteString("\n")
 	if len(m.state.Inventory.Manifest.Tracked) == 0 {
-		b.WriteString(mutedStyle.Render("  none\n"))
+		b.WriteString(mutedStyle.Render("  None\n"))
 	}
+
 	for _, tracked := range m.state.Inventory.Manifest.Tracked {
 		b.WriteString(fmt.Sprintf("  %s desired=%s installed=%s\n",
 			tracked.Key(), mutedStyle.Render(tracked.DesiredVersion), mutedStyle.Render(tracked.InstalledVersion)))
