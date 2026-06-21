@@ -8,7 +8,8 @@
 *.so
 *.dylib
 
-
+# Ignore IDE specific and binary files
+rekja
 .idea
 .env
 .DS_STORE
