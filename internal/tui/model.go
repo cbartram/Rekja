@@ -45,34 +45,34 @@ var (
 	appStyle = lipgloss.NewStyle().Padding(1, 2)
 
 	titleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("0")).
-		Background(colorAccent).
-		Padding(0, 1)
+			Bold(true).
+			Foreground(lipgloss.Color("0")).
+			Background(colorAccent).
+			Padding(0, 1)
 
 	subtitleStyle = mutedStyle
 
 	tabActiveStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("0")).
-		Background(colorAccent).
-		Padding(0, 1)
+			Bold(true).
+			Foreground(lipgloss.Color("0")).
+			Background(colorAccent).
+			Padding(0, 1)
 
 	tabInactiveStyle = lipgloss.NewStyle().
-		Foreground(colorMuted).
-		Padding(0, 1)
+				Foreground(colorMuted).
+				Padding(0, 1)
 
 	panelStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorFaint).
-		Padding(1, 2)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorFaint).
+			Padding(1, 2)
 
 	errorStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(colorBad).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBad).
-		Padding(0, 1)
+			Bold(true).
+			Foreground(colorBad).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBad).
+			Padding(0, 1)
 
 	mutedStyle    = lipgloss.NewStyle().Foreground(colorMuted)
 	goodStyle     = lipgloss.NewStyle().Foreground(colorGood)

@@ -143,6 +143,170 @@ Rekja writes only under:
 /config/valheimplus/.rekja/
 ```
 
+
+## Sidecar Deployment
+
+The sidecar is a gRPC server that runs alongside the Valheim server container. It manages mod files on the shared PVC and exposes a gRPC API for the TUI client.
+
+### Building the Sidecar
+
+**Docker build:**
+
+```shell
+docker build -t rekja-sidecar:latest .
+```
+
+The `Dockerfile` produces a minimal Alpine image (~30 MB) with the compiled sidecar binary.
+
+**Local build:**
+
+```shell
+make sidecar
+# outputs ./bin/rekja-sidecar
+```
+
+### Environment Variables
+
+| Variable                  | Default                                | Description                                      |
+|---------------------------|----------------------------------------|--------------------------------------------------|
+| `REKJA_PLUGINS_DIR`       | `/config/valheimplus/plugins`          | Path to the ValheimPlus plugins directory        |
+| `REKJA_THUNDERSTORE_URL`  | `https://valheim.thunderstore.io`      | Thunderstore API base URL                        |
+| `REKJA_GRPC_ADDR`         | `:8080`                                | gRPC listen address                              |
+| `REKJA_NAMESPACE`         | *(required in cluster)*                | Kubernetes namespace                             |
+| `REKJA_POD_NAME`          | *(required in cluster)*                | Target Valheim pod name                          |
+| `REKJA_CONTAINER`         | `valheim`                              | Target container name                            |
+| `REKJA_LABEL_SELECTOR`    | *(alternative to POD_NAME)*            | Kubernetes label selector for target pod         |
+
+### Kubernetes Deployment
+
+Below is a complete example deploying both the Valheim server and the Rekja sidecar in one Pod:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: valheim-server
+  namespace: valheim
+spec:
+  restartPolicy: Always
+  containers:
+    - name: valheim-server
+      image: ghcr.io/community-valheim-tools/valheim-server:latest
+      env:
+        - name: VALHEIM_PLUS
+          value: "true"
+        - name: UPDATE_CRON
+          value: "0 6 * * *"
+      ports:
+        - containerPort: 2456
+          protocol: UDP
+      volumeMounts:
+        - name: config
+          mountPath: /config
+    - name: rekja-sidecar
+      image: rekja-sidecar:latest
+      ports:
+        - containerPort: 8080
+      env:
+        - name: REKJA_PLUGINS_DIR
+          value: /config/valheimplus/plugins
+        - name: REKJA_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: REKJA_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: REKJA_CONTAINER
+          value: valheim-server
+      volumeMounts:
+        - name: config
+          mountPath: /config
+  volumes:
+    - name: config
+      persistentVolumeClaim:
+        claimName: valheim-config-pvc
+```
+
+For Deployment-based rollout (rolling updates):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valheim-server
+  namespace: valheim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: valheim-server
+  template:
+    metadata:
+      labels:
+        app: valheim-server
+    spec:
+      restartPolicy: Always
+      containers:
+        - name: valheim-server
+          image: ghcr.io/community-valheim-tools/valheim-server:latest
+          env:
+            - name: VALHEIM_PLUS
+              value: "true"
+          ports:
+            - containerPort: 2456
+              protocol: UDP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+        - name: rekja-sidecar
+          image: rekja-sidecar:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: REKJA_PLUGINS_DIR
+              value: /config/valheimplus/plugins
+            - name: REKJA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: REKJA_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REKJA_CONTAINER
+              value: valheim-server
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: valheim-config-pvc
+```
+
+### TUI — Connecting to the Sidecar
+
+Build and run the TUI locally. It will connect to the sidecar via gRPC:
+
+```shell
+# Build the TUI
+go build -o bin/rekja ./cmd/
+
+# Connect to the sidecar running in your cluster
+# Option 1: port-forward
+kubectl port-forward svc/valheim-server 8080:8080 -n valheim &
+export REKJA_SERVER=localhost:8080
+./bin/rekja
+
+# Option 2: direct pod address (when running inside the cluster)
+export REKJA_SERVER=rekja-sidecar:8080
+./bin/rekja
+```
+
+The sidecar gRPC address defaults to `:8080`. Override it with `REKJA_GRPC_ADDR`.
+
 ## Configuration
 
 Rekja can run from defaults, environment variables, or a JSON config file:
@@ -238,6 +402,19 @@ Run vet:
 go vet ./...
 ```
 
+
+Build the sidecar:
+
+```bash
+make sidecar
+```
+
+Run the sidecar locally (outside Kubernetes):
+
+```bash
+export REKJA_PLUGINS_DIR=/tmp/rekja-valheim/plugins
+./bin/rekja-sidecar
+```
 Run the TUI locally:
 
 ```bash

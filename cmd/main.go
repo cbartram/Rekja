@@ -51,11 +51,11 @@ func main() {
 	// Local fallback for server operations when no sidecar is available.
 	if serverClient == nil {
 		serverClient = &localServerClient{
-			config:      cfg,
-			scanner:     scanner,
-			store:       store,
+			config:       cfg,
+			scanner:      scanner,
+			store:        store,
 			thunderstore: thunderstoreClient,
-			sync:        syncEngine,
+			sync:         syncEngine,
 		}
 	}
 

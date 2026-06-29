@@ -243,15 +243,15 @@ func protoToPackage(p *v1.Package) thunderstore.Package {
 		}
 	}
 	return thunderstore.Package{
-		Name:             p.Name,
-		FullName:         p.FullName,
-		Owner:            p.Owner,
-		PackageURL:       p.PackageUrl,
-		DateUpdated:      parseTime(p.DateUpdated),
-		IsDeprecated:     p.IsDeprecated,
-		HasNSFWContent:   p.HasNsfwContent,
-		Categories:       p.Categories,
-		Versions:         versions,
+		Name:           p.Name,
+		FullName:       p.FullName,
+		Owner:          p.Owner,
+		PackageURL:     p.PackageUrl,
+		DateUpdated:    parseTime(p.DateUpdated),
+		IsDeprecated:   p.IsDeprecated,
+		HasNSFWContent: p.HasNsfwContent,
+		Categories:     p.Categories,
+		Versions:       versions,
 	}
 }
 
