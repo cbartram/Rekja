@@ -1,13 +1,14 @@
 // Package sidecar implements the gRPC server that manages Valheim mods on the
 // dedicated server. It runs as a sidecar container alongside the Valheim pod
 // and exposes operations for mod sync, restart, and log retrieval.
-package sidecar
+package main
 
 import (
 	"context"
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
 	"github.com/cbartram/rekja/internal/config"
@@ -25,10 +26,11 @@ type Config struct {
 	PluginsDir          string
 	ThunderstoreBaseURL string
 	Kubernetes          config.KubernetesConfig
+	Logger              *zap.Logger
 }
 
-// server holds the sidecar's internal dependencies.
-type server struct {
+// Server holds the sidecar's internal dependencies.
+type Server struct {
 	v1.UnimplementedRekjaServiceServer
 	pluginsDir         string
 	store              *inventory.Store
@@ -36,33 +38,35 @@ type server struct {
 	thunderstoreClient *thunderstore.Client
 	syncEngine         *syncengine.Engine
 	kubeClient         kube.Client
+	logger             *zap.Logger
 }
 
 // NewServer creates a new sidecar server with the given config.
-func NewServer(cfg Config) (*server, error) {
+func NewServer(cfg Config) (*Server, error) {
 	thunderstoreClient := thunderstore.NewClient(cfg.ThunderstoreBaseURL, nil)
 	store := inventory.NewStore(cfg.PluginsDir + "/.rekja/installed.json")
 	scanner := inventory.NewScanner(cfg.PluginsDir, store)
 	syncEngine := syncengine.NewEngine(cfg.PluginsDir, cfg.PluginsDir+"/.rekja", thunderstoreClient, store)
 
-	var kubeClient kube.Client = noopKubeClient{cfg: cfg.Kubernetes}
+	var kubeClient kube.Client = noopKubeClient{logger: cfg.Logger}
 	realClient, err := kube.New(cfg.Kubernetes)
 	if err == nil {
 		kubeClient = realClient
 	}
 
-	return &server{
+	return &Server{
 		pluginsDir:         cfg.PluginsDir,
 		store:              store,
 		scanner:            scanner,
 		thunderstoreClient: thunderstoreClient,
 		syncEngine:         syncEngine,
 		kubeClient:         kubeClient,
+		logger:             cfg.Logger,
 	}, nil
 }
 
 // Register registers the server on a gRPC server instance.
-func (s *server) Register(grpcServer *grpc.Server) {
+func (s *Server) Register(grpcServer *grpc.Server) {
 	v1.RegisterRekjaServiceServer(grpcServer, s)
 }
 
@@ -70,14 +74,16 @@ func (s *server) Register(grpcServer *grpc.Server) {
 // LoadState
 // ---------------------------------------------------------------------------
 
-func (s *server) LoadState(_ context.Context, _ *v1.LoadStateRequest) (*v1.StateResponse, error) {
+func (s *Server) LoadState(_ context.Context, _ *v1.LoadStateRequest) (*v1.StateResponse, error) {
 	snapshot, err := s.scanner.Scan()
 	if err != nil {
+		s.logger.Error("scanner failed", zap.Error(err))
 		return nil, err
 	}
 
 	packages, err := s.thunderstoreClient.FetchIndex(context.Background())
 	if err != nil {
+		s.logger.Error("fetch thunderstore index failed", zap.Error(err))
 		return nil, err
 	}
 	index := thunderstore.IndexByFullName(packages)
@@ -90,14 +96,18 @@ func (s *server) LoadState(_ context.Context, _ *v1.LoadStateRequest) (*v1.State
 		}
 		latest, ok, err := thunderstore.FindVersion(pkg, tracked.DesiredVersion)
 		if err != nil {
-			return nil, err
+			s.logger.Warn("version check failed for tracked mod",
+				zap.String("mod", tracked.FullName), zap.Error(err))
+			continue
 		}
 		if !ok || tracked.InstalledVersion == "" {
 			continue
 		}
 		compare, err := thunderstore.CompareVersions(latest.VersionNumber, tracked.InstalledVersion)
 		if err != nil {
-			return nil, err
+			s.logger.Warn("version comparison failed for tracked mod",
+				zap.String("mod", tracked.FullName), zap.Error(err))
+			continue
 		}
 		if compare > 0 {
 			updates = append(updates, &v1.Update{
@@ -112,9 +122,9 @@ func (s *server) LoadState(_ context.Context, _ *v1.LoadStateRequest) (*v1.State
 
 	return &v1.StateResponse{
 		Inventory: &v1.Inventory{
-			Manifest:        manifestToProto(snapshot.Manifest),
-			TrackedDrift:    filesToProto(snapshot.TrackedDrift),
-			UntrackedFiles:  filesToProto(snapshot.UntrackedFiles),
+			Manifest:       manifestToProto(snapshot.Manifest),
+			TrackedDrift:   filesToProto(snapshot.TrackedDrift),
+			UntrackedFiles: filesToProto(snapshot.UntrackedFiles),
 		},
 		Packages: packagesToProto(packages),
 		Updates:  updates,
@@ -127,11 +137,12 @@ func (s *server) LoadState(_ context.Context, _ *v1.LoadStateRequest) (*v1.State
 // StartSync (server-side streaming)
 // ---------------------------------------------------------------------------
 
-func (s *server) StartSync(req *v1.StartSyncRequest, stream v1.RekjaService_StartSyncServer) error {
+func (s *Server) StartSync(req *v1.StartSyncRequest, stream v1.RekjaService_StartSyncServer) error {
 	tracked := trackedModsFromProto(req.Roots)
 	if len(tracked) == 0 {
 		current, loadErr := s.store.Load(s.pluginsDir)
 		if loadErr != nil {
+			s.logger.Error("manifest load failed", zap.Error(loadErr))
 			return stream.Send(&v1.SyncProgress{
 				Message: "manifest load failed",
 				Error:   loadErr.Error(),
@@ -142,6 +153,7 @@ func (s *server) StartSync(req *v1.StartSyncRequest, stream v1.RekjaService_Star
 
 	pkgs, fetchErr := s.thunderstoreClient.FetchIndex(context.Background())
 	if fetchErr != nil {
+		s.logger.Error("fetch index failed", zap.Error(fetchErr))
 		return stream.Send(&v1.SyncProgress{
 			Message: "fetch index failed",
 			Error:   fetchErr.Error(),
@@ -150,16 +162,18 @@ func (s *server) StartSync(req *v1.StartSyncRequest, stream v1.RekjaService_Star
 
 	plan, err := resolve.Resolve(thunderstore.IndexByFullName(pkgs), tracked)
 	if err != nil {
+		s.logger.Error("resolve failed", zap.Error(err))
 		return stream.Send(&v1.SyncProgress{
 			Message: "resolve failed",
 			Error:   err.Error(),
 		})
 	}
 
+	s.logger.Info("sync started", zap.Int("mod_count", len(plan.Roots)+len(plan.Dependencies)))
 	events := make(chan syncengine.Event, 64)
 	go func() {
 		if err := s.syncEngine.Apply(context.Background(), plan, events); err != nil {
-			// Error is already sent through the channel by the engine.
+			s.logger.Error("sync engine apply failed", zap.Error(err))
 		}
 	}()
 
@@ -173,6 +187,7 @@ func (s *server) StartSync(req *v1.StartSyncRequest, stream v1.RekjaService_Star
 			progress.Error = event.Err.Error()
 		}
 		if sendErr := stream.Send(progress); sendErr != nil {
+			s.logger.Error("stream send failed", zap.Error(sendErr))
 			return sendErr
 		}
 		if event.Done || event.Err != nil {
@@ -192,6 +207,7 @@ func (s *server) StartSync(req *v1.StartSyncRequest, stream v1.RekjaService_Star
 			return nil
 		}
 	}
+	s.logger.Info("sync completed")
 	return nil
 }
 
@@ -199,15 +215,19 @@ func (s *server) StartSync(req *v1.StartSyncRequest, stream v1.RekjaService_Star
 // Restart
 // ---------------------------------------------------------------------------
 
-func (s *server) Restart(_ context.Context, _ *v1.RestartRequest) (*v1.RestartResponse, error) {
+func (s *Server) Restart(_ context.Context, _ *v1.RestartRequest) (*v1.RestartResponse, error) {
+	s.logger.Info("restart requested")
 	target, err := s.kubeClient.ResolveTarget(context.Background())
 	if err != nil {
+		s.logger.Error("resolve target for restart failed", zap.Error(err))
 		return nil, err
 	}
 	output, err := s.kubeClient.Restart(context.Background(), target)
 	if err != nil {
+		s.logger.Error("restart failed", zap.Error(err))
 		return nil, err
 	}
+	s.logger.Info("restart completed")
 	return &v1.RestartResponse{Output: output}, nil
 }
 
@@ -215,9 +235,10 @@ func (s *server) Restart(_ context.Context, _ *v1.RestartRequest) (*v1.RestartRe
 // Logs
 // ---------------------------------------------------------------------------
 
-func (s *server) Logs(_ context.Context, req *v1.LogsRequest) (*v1.LogsResponse, error) {
+func (s *Server) Logs(_ context.Context, req *v1.LogsRequest) (*v1.LogsResponse, error) {
 	target, err := s.kubeClient.ResolveTarget(context.Background())
 	if err != nil {
+		s.logger.Error("resolve target for logs failed", zap.Error(err))
 		return nil, err
 	}
 	lines := int64(200)
@@ -226,6 +247,7 @@ func (s *server) Logs(_ context.Context, req *v1.LogsRequest) (*v1.LogsResponse,
 	}
 	content, err := s.kubeClient.Logs(context.Background(), target, lines)
 	if err != nil {
+		s.logger.Error("fetch logs failed", zap.Int64("lines", req.Lines), zap.Error(err))
 		return nil, err
 	}
 	return &v1.LogsResponse{Content: content}, nil
@@ -237,11 +259,11 @@ func (s *server) Logs(_ context.Context, req *v1.LogsRequest) (*v1.LogsResponse,
 
 func manifestToProto(m manifest.Manifest) *v1.Manifest {
 	return &v1.Manifest{
-		SchemaVersion: int32(m.SchemaVersion),
-		Target:        targetFromManifest(m.Target),
-		Tracked:       trackedModsToProto(m.Tracked),
+		SchemaVersion:  int32(m.SchemaVersion),
+		Target:         targetFromManifest(m.Target),
+		Tracked:        trackedModsToProto(m.Tracked),
 		UntrackedFiles: filesToProto(m.Untracked),
-		UpdatedAt:     m.UpdatedAt.Format(time.RFC3339),
+		UpdatedAt:      m.UpdatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -384,15 +406,15 @@ func packagesToProto(pkgs []thunderstore.Package) []*v1.Package {
 			}
 		}
 		result[i] = &v1.Package{
-			Name:             p.Name,
-			FullName:         p.FullName,
-			Owner:            p.Owner,
-			PackageUrl:       p.PackageURL,
-			DateUpdated:      p.DateUpdated.Format(time.RFC3339),
-			IsDeprecated:     p.IsDeprecated,
-			HasNsfwContent:   p.HasNSFWContent,
-			Categories:       p.Categories,
-			Versions:         versions,
+			Name:           p.Name,
+			FullName:       p.FullName,
+			Owner:          p.Owner,
+			PackageUrl:     p.PackageURL,
+			DateUpdated:    p.DateUpdated.Format(time.RFC3339),
+			IsDeprecated:   p.IsDeprecated,
+			HasNsfwContent: p.HasNSFWContent,
+			Categories:     p.Categories,
+			Versions:       versions,
 		}
 	}
 	return result
@@ -415,7 +437,8 @@ func trackedToProto(m manifest.TrackedMod) *v1.TrackedMod {
 
 // noopKubeClient implements kube.Client for when no cluster is reachable.
 type noopKubeClient struct {
-	cfg config.KubernetesConfig
+	cfg    config.KubernetesConfig
+	logger *zap.Logger
 }
 
 func (n noopKubeClient) ResolveTarget(ctx context.Context) (kube.Target, error) {
@@ -426,9 +449,11 @@ func (n noopKubeClient) ResolveTarget(ctx context.Context) (kube.Target, error) 
 }
 
 func (n noopKubeClient) Restart(ctx context.Context, target kube.Target) (string, error) {
+	n.logger.Debug("noop: no kubernetes connection available")
 	return "", fmt.Errorf("no kubernetes connection available")
 }
 
 func (n noopKubeClient) Logs(ctx context.Context, target kube.Target, lines int64) (string, error) {
+	n.logger.Debug("noop: no kubernetes connection available")
 	return "", fmt.Errorf("no kubernetes connection available")
 }
