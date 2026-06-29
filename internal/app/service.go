@@ -14,17 +14,27 @@ import (
 	"github.com/cbartram/rekja/internal/thunderstore"
 )
 
+// ServerClient defines the gRPC client operations used by Service for
+// server-side actions. Implementations include the gRPC client and a local
+// fallback when running without a sidecar.
+type ServerClient interface {
+	LoadState(ctx context.Context) (State, error)
+	BuildSyncPlan(state State) (resolve.Plan, error)
+	StartSync(ctx context.Context, events chan<- sync.Event) error
+	Restart(ctx context.Context) (string, error)
+	Logs(ctx context.Context, lines int64) (string, error)
+}
+
 // Dependencies groups app service collaborators.
 type Dependencies struct {
 	Config       config.Config
 	Scanner      *inventory.Scanner
 	Store        *inventory.Store
 	Thunderstore *thunderstore.Client
-	Sync         *sync.Engine
-	Kubernetes   kube.Client
+	ServerClient ServerClient
 }
 
-// Service coordinates inventory, Thunderstore, sync, and Kubernetes actions.
+// Service coordinates inventory, Thunderstore, sync, and server actions.
 type Service struct {
 	deps Dependencies
 }
@@ -90,12 +100,11 @@ func (s *Service) LoadState(ctx context.Context) (State, error) {
 		}
 	}
 
-	target, _ := s.deps.Kubernetes.ResolveTarget(ctx)
 	return State{
 		Inventory: snapshot,
 		Packages:  packages,
 		Updates:   updates,
-		Target:    target,
+		Target:    kube.Target{},
 	}, nil
 }
 
@@ -114,31 +123,17 @@ func (s *Service) BuildSyncPlan(state State) (resolve.Plan, error) {
 
 // ApplySync applies a resolved plan.
 func (s *Service) ApplySync(ctx context.Context, plan resolve.Plan, events chan<- sync.Event) error {
-	return s.deps.Sync.Apply(ctx, plan, events)
+	return s.deps.ServerClient.StartSync(ctx, events)
 }
 
-// RestartServer restarts the Valheim server process via Kubernetes exec.
-func (s *Service) RestartServer(ctx context.Context, target kube.Target) (string, error) {
-	if target.Pod == "" {
-		resolved, err := s.deps.Kubernetes.ResolveTarget(ctx)
-		if err != nil {
-			return "", err
-		}
-		target = resolved
-	}
-	return s.deps.Kubernetes.Restart(ctx, target)
+// RestartServer restarts the Valheim server process via the server sidecar.
+func (s *Service) RestartServer(ctx context.Context, _ kube.Target) (string, error) {
+	return s.deps.ServerClient.Restart(ctx)
 }
 
 // Logs reads recent server logs.
-func (s *Service) Logs(ctx context.Context, target kube.Target, lines int64) (string, error) {
-	if target.Pod == "" {
-		resolved, err := s.deps.Kubernetes.ResolveTarget(ctx)
-		if err != nil {
-			return "", err
-		}
-		target = resolved
-	}
-	return s.deps.Kubernetes.Logs(ctx, target, lines)
+func (s *Service) Logs(ctx context.Context, _ kube.Target, lines int64) (string, error) {
+	return s.deps.ServerClient.Logs(ctx, lines)
 }
 
 // TrackMod adds or updates a tracked Thunderstore package in the Rekja
@@ -203,7 +198,7 @@ func parseTrackedSpec(spec string) (manifest.TrackedMod, error) {
 			return manifest.TrackedMod{}, fmt.Errorf("desired version cannot be empty")
 		}
 	}
-	namespace, name, ok := strings.Cut(spec, "/")
+	namespace, name, ok := strings.Cut(spec, "-")
 	if !ok || namespace == "" || name == "" {
 		return manifest.TrackedMod{}, fmt.Errorf("tracked mod must be Namespace/Name or Namespace/Name@Version")
 	}
